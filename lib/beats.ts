@@ -19,7 +19,7 @@ export const BEAT_INFO: Record<Beat, { color: string; definition: string }> = {
   },
   Dialogue: {
     color: "#3b82f6",
-    definition: "A character speaks, or the sentence is centered on spoken words.",
+    definition: "A character speaks, or the passage is centered on spoken words.",
   },
   Characterization: {
     color: "#a855f7",
@@ -43,11 +43,40 @@ export const BEAT_INFO: Record<Beat, { color: string; definition: string }> = {
   },
 };
 
-export type BeatPrediction = {
+// How far ahead Jev looks. All horizons are asked in one request.
+export const HORIZONS = [
+  {
+    key: "nextSentence",
+    label: "Next sentence",
+    question: "What should the very next sentence at the cursor mainly do?",
+  },
+  {
+    key: "restOfParagraph",
+    label: "Rest of this paragraph",
+    question:
+      "Looking past the next sentence, what should the rest of the paragraph the cursor is in mainly do before it ends?",
+  },
+  {
+    key: "nextParagraph",
+    label: "Next paragraph",
+    question: "What should the next full paragraph after the current one mainly do?",
+  },
+] as const;
+
+export type HorizonKey = (typeof HORIZONS)[number]["key"];
+
+export type HorizonPrediction = {
+  key: HorizonKey;
+  label: string;
+  choice: Beat;
+  confidence: number;
+  // Sorted from most to least likely; percents sum to roughly 100.
   distribution: { category: Beat; percent: number }[];
-  reason: string;
-  hint: string;
-  usage?: { cachedTokens: number; uncachedTokens: number };
+};
+
+export type BeatPrediction = {
+  horizons: HorizonPrediction[];
+  inputTokens: number | null;
 };
 
 export type NextBeatRequest = {

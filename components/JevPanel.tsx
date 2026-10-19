@@ -1,6 +1,6 @@
 "use client";
 
-import { BEAT_INFO, type BeatPrediction } from "@/lib/beats";
+import { BEATS, BEAT_INFO, type BeatPrediction, type HorizonPrediction } from "@/lib/beats";
 
 type Props = {
   prediction: BeatPrediction | null;
@@ -10,6 +10,37 @@ type Props = {
   onNotesChange: (notes: string) => void;
   onAsk: () => void;
 };
+
+function Horizon({ horizon }: { horizon: HorizonPrediction }) {
+  const top = horizon.distribution[0];
+  return (
+    <section className="jev-horizon">
+      <p className="jev-label">{horizon.label}</p>
+      <p className="jev-top">
+        <span className="jev-dot" style={{ background: BEAT_INFO[top.category].color }} />
+        {top.category} <span className="jev-pct">{top.percent}%</span>
+      </p>
+      <div className="jev-stack" role="img" aria-label={horizon.distribution.map((d) => `${d.category} ${d.percent}%`).join(", ")}>
+        {horizon.distribution
+          .filter((d) => d.percent > 0)
+          .map((d) => (
+            <span
+              key={d.category}
+              title={`${d.category} ${d.percent}%`}
+              style={{ width: `${d.percent}%`, background: BEAT_INFO[d.category].color }}
+            />
+          ))}
+      </div>
+      <p className="jev-runners">
+        {horizon.distribution
+          .slice(1, 3)
+          .filter((d) => d.percent > 0)
+          .map((d) => `${d.category} ${d.percent}%`)
+          .join(" · ")}
+      </p>
+    </section>
+  );
+}
 
 export function JevPanel({ prediction, status, error, notes, onNotesChange, onAsk }: Props) {
   return (
@@ -21,34 +52,27 @@ export function JevPanel({ prediction, status, error, notes, onNotesChange, onAs
         </span>
       </div>
 
-      <p className="jev-label">Next sentence</p>
       {prediction ? (
         <div className={status === "thinking" ? "jev-stale" : undefined}>
-          <ul className="jev-bars">
-            {prediction.distribution.map(({ category, percent }) => (
-              <li key={category} title={BEAT_INFO[category].definition}>
-                <span className="jev-cat">{category}</span>
-                <span className="jev-track">
-                  <span
-                    className="jev-fill"
-                    style={{ width: `${percent}%`, background: BEAT_INFO[category].color }}
-                  />
-                </span>
-                <span className="jev-pct">{percent}%</span>
+          {prediction.horizons.map((h) => (
+            <Horizon key={h.key} horizon={h} />
+          ))}
+          <ul className="jev-legend">
+            {BEATS.map((b) => (
+              <li key={b} title={BEAT_INFO[b].definition}>
+                <span className="jev-dot" style={{ background: BEAT_INFO[b].color }} />
+                {b}
               </li>
             ))}
           </ul>
-          <p className="jev-hint">{prediction.hint}</p>
-          <p className="jev-reason">{prediction.reason}</p>
-          {prediction.usage && (
-            <p className="jev-usage">
-              {prediction.usage.cachedTokens.toLocaleString()} tokens cached ·{" "}
-              {prediction.usage.uncachedTokens.toLocaleString()} new
-            </p>
+          {prediction.inputTokens !== null && (
+            <p className="jev-usage">{prediction.inputTokens.toLocaleString()} tokens read</p>
           )}
         </div>
       ) : (
-        <p className="jev-empty">Finish a sentence and Jev will suggest what comes next.</p>
+        <p className="jev-empty">
+          Finish a sentence and Jev will suggest what comes next, from the next sentence to the next paragraph.
+        </p>
       )}
       {error && <p className="jev-error">{error}</p>}
 

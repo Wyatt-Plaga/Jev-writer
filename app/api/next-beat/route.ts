@@ -1,73 +1,64 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
-import { z } from "zod";
-import { BEATS, BEAT_INFO, type BeatPrediction, type NextBeatRequest } from "@/lib/beats";
+import {
+  BEATS,
+  BEAT_INFO,
+  HORIZONS,
+  type Beat,
+  type BeatPrediction,
+  type NextBeatRequest,
+} from "@/lib/beats";
 
-const client = new Anthropic();
+// TypeSafe's Jev model, called over plain HTTP. Request and response shapes
+// match the official @typesafe-ai/sdk (v0.7.0) `systemOne` call.
+const BASE_URL = (process.env.TYPESAFE_BASE_URL || "https://api.typesafe.ai").replace(/\/+$/, "");
+const MODEL = process.env.TYPESAFE_DEFAULT_MODEL || "jev-latest";
+const TIMEOUT_MS = 15_000;
 
-// Paragraphs are grouped into fixed-size chunks so that, as the writer keeps
-// typing at the end, every earlier chunk stays byte-identical and is served
-// from the prompt cache. Only the last (still-growing) chunk is re-processed.
-const PARAGRAPHS_PER_CHUNK = 20;
+type ChoiceAnswer = {
+  type: "choice";
+  choice: string;
+  confidence: number;
+  probabilities: Record<string, number>;
+};
 
-const SYSTEM_PROMPT = `You are Jev, a pacing coach for fiction writers. You read a writer's entire manuscript up to their cursor and judge what the NEXT sentence should do.
+type SystemOneResponse = {
+  model: string;
+  answers: Record<string, ChoiceAnswer>;
+  usage: { input_tokens: number | null; output_tokens: number | null };
+};
 
-Categories:
-${BEATS.map((b) => `- ${b}: ${BEAT_INFO[b].definition}`).join("\n")}
+const CRITERIA = Object.fromEntries(BEATS.map((b) => [b, BEAT_INFO[b].definition]));
 
-How to judge:
-- Consider the whole manuscript, not just the last line: what has the reader not been given in a while, what question is open, what the scene needs right now.
-- Look at the rhythm of recent sentences (e.g. a long run of action with no reaction, or exposition that has gone on too long).
-- Give a percentage for every category, summing to 100. Spread probability honestly: if two options are both strong, say so.
-- "reason": one or two sentences explaining the top choice, referring to specifics in the text (names, events).
-- "hint": a short, concrete direction for the top choice (e.g. "Show Mara's hands shaking as she folds the letter"). Do not write the sentence for them.`;
+const QUESTIONS = Object.fromEntries(
+  HORIZONS.map((h) => [
+    h.key,
+    {
+      type: "choice",
+      instructions:
+        `${h.question} Judge from the whole manuscript, not just the last line: ` +
+        "what the reader hasn't been given in a while, which questions are open, and the rhythm of recent passages.",
+      criteria: CRITERIA,
+    },
+  ]),
+);
 
-const PredictionSchema = z.object({
-  distribution: z.array(z.object({ category: z.enum(BEATS), percent: z.number() })),
-  reason: z.string(),
-  hint: z.string(),
-});
-
-function buildContent(req: NextBeatRequest): Anthropic.Beta.BetaTextBlockParam[] {
-  const paragraphs = req.before.split(/\n{2,}/);
-  const chunks: string[] = [];
-  for (let i = 0; i < paragraphs.length; i += PARAGRAPHS_PER_CHUNK) {
-    chunks.push(paragraphs.slice(i, i + PARAGRAPHS_PER_CHUNK).join("\n\n"));
-  }
-  // The last paragraph is the one being typed, so a chunk only counts as
-  // settled once a paragraph after it exists.
-  const lastCompleteChunk = Math.floor((paragraphs.length - 1) / PARAGRAPHS_PER_CHUNK) - 1;
-
-  const blocks: Anthropic.Beta.BetaTextBlockParam[] = [];
-  if (req.notes?.trim()) {
-    blocks.push({ type: "text", text: `<story_notes>\n${req.notes.trim()}\n</story_notes>` });
-  }
-  blocks.push({ type: "text", text: "<manuscript_before_cursor>" });
-  chunks.forEach((text, i) => {
-    blocks.push({
-      type: "text",
-      text: i < chunks.length - 1 ? text + "\n\n" : text,
-      ...(i === lastCompleteChunk ? { cache_control: { type: "ephemeral" as const } } : {}),
-    });
-  });
-
-  let tail = "</manuscript_before_cursor>\n\n";
-  if (req.after.trim()) {
-    tail += `<manuscript_after_cursor>\n${req.after}\n</manuscript_after_cursor>\n\n`;
-  }
-  tail += "What should the next sentence at the cursor do?";
-  blocks.push({ type: "text", text: tail });
-  return blocks;
+function toPercents(probabilities: Record<string, number>) {
+  const sum = BEATS.reduce((acc, b) => acc + Math.max(0, probabilities[b] ?? 0), 0) || 1;
+  return BEATS.map((category) => ({
+    category,
+    percent: Math.round((Math.max(0, probabilities[category] ?? 0) / sum) * 100),
+  })).sort((a, b) => b.percent - a.percent);
 }
 
-// Make sure every category appears and the percentages sum to 100.
-function normalize(dist: { category: (typeof BEATS)[number]; percent: number }[]) {
-  const totals = new Map<(typeof BEATS)[number], number>(BEATS.map((b) => [b, 0]));
-  for (const d of dist) totals.set(d.category, (totals.get(d.category) ?? 0) + Math.max(0, d.percent));
-  const sum = [...totals.values()].reduce((a, b) => a + b, 0) || 1;
-  return [...totals.entries()]
-    .map(([category, p]) => ({ category, percent: Math.round((p / sum) * 100) }))
-    .sort((a, b) => b.percent - a.percent);
+function errorMessage(status: number, body: unknown) {
+  const detail =
+    typeof body === "object" && body !== null && "error" in body
+      ? JSON.stringify((body as { error: unknown }).error)
+      : typeof body === "string"
+        ? body.slice(0, 300)
+        : "";
+  if (status === 401) return "Missing or invalid TYPESAFE_API_KEY.";
+  if (status === 429) return "Rate limited; try again in a moment.";
+  return `Jev API error ${status}${detail ? `: ${detail}` : ""}`;
 }
 
 export async function POST(request: Request) {
@@ -75,57 +66,58 @@ export async function POST(request: Request) {
   if (!body.before?.trim()) {
     return Response.json({ error: "Write something first." }, { status: 400 });
   }
-
-  try {
-    const response = await client.beta.messages.parse(
-      {
-        model: "claude-opus-5-5",
-        max_tokens: 4000,
-        // Low effort keeps latency down; this runs after every sentence.
-        output_config: { effort: "low", format: betaZodOutputFormat(PredictionSchema) },
-        betas: ["server-side-fallback-2026-07-01"],
-        fallbacks: "default",
-        system: [{ type: "text", text: SYSTEM_PROMPT }],
-        messages: [{ role: "user", content: buildContent(body) }],
-      },
-      { signal: request.signal },
-    );
-
-    if (response.stop_reason === "refusal") {
-      return Response.json({ error: "Jev couldn't analyze this passage." }, { status: 422 });
-    }
-    const parsed = response.parsed_output;
-    if (!parsed) {
-      return Response.json({ error: "Jev returned an unreadable answer." }, { status: 502 });
-    }
-
-    const result: BeatPrediction = {
-      distribution: normalize(parsed.distribution),
-      reason: parsed.reason,
-      hint: parsed.hint,
-      usage: {
-        cachedTokens: response.usage.cache_read_input_tokens ?? 0,
-        uncachedTokens:
-          response.usage.input_tokens + (response.usage.cache_creation_input_tokens ?? 0),
-      },
-    };
-    return Response.json(result);
-  } catch (error) {
-    if (error instanceof Anthropic.APIUserAbortError) {
-      return new Response(null, { status: 499 });
-    }
-    if (error instanceof Anthropic.AuthenticationError) {
-      return Response.json({ error: "Missing or invalid ANTHROPIC_API_KEY." }, { status: 500 });
-    }
-    if (error instanceof Anthropic.RateLimitError) {
-      return Response.json({ error: "Rate limited; try again in a moment." }, { status: 429 });
-    }
-    if (error instanceof Anthropic.APIError) {
-      return Response.json({ error: `Claude API error ${error.status}: ${error.message}` }, { status: 502 });
-    }
-    // E.g. no API key configured: the SDK throws before sending anything.
-    console.error(error);
-    const message = error instanceof Error ? error.message : String(error);
-    return Response.json({ error: message }, { status: 500 });
+  const apiKey = process.env.TYPESAFE_API_KEY?.trim();
+  if (!apiKey) {
+    return Response.json({ error: "Set TYPESAFE_API_KEY in .env.local." }, { status: 500 });
   }
+
+  const state: Record<string, string> = {
+    manuscript_before_cursor: body.before,
+    manuscript_after_cursor: body.after,
+  };
+  if (body.notes?.trim()) state.story_notes = body.notes.trim();
+
+  let res: Response;
+  try {
+    res = await fetch(`${BASE_URL}/v1/systemone`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ state, questions: QUESTIONS, model: MODEL }),
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(TIMEOUT_MS)]),
+    });
+  } catch (error) {
+    if (request.signal.aborted) return new Response(null, { status: 499 });
+    const timedOut = error instanceof DOMException && error.name === "TimeoutError";
+    return Response.json(
+      { error: timedOut ? "Jev took too long to answer." : "Couldn't reach the Jev API." },
+      { status: 502 },
+    );
+  }
+
+  const text = await res.text();
+  let parsed: unknown = text;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // Leave non-JSON bodies as text for the error message.
+  }
+  if (!res.ok) {
+    return Response.json({ error: errorMessage(res.status, parsed) }, { status: 502 });
+  }
+
+  const data = parsed as SystemOneResponse;
+  const result: BeatPrediction = {
+    horizons: HORIZONS.map((h) => {
+      const answer = data.answers[h.key];
+      return {
+        key: h.key,
+        label: h.label,
+        choice: answer.choice as Beat,
+        confidence: answer.confidence,
+        distribution: toPercents(answer.probabilities),
+      };
+    }),
+    inputTokens: data.usage?.input_tokens ?? null,
+  };
+  return Response.json(result);
 }
