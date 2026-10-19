@@ -1,0 +1,127 @@
+:root {
+  --bg: #f1f3f4;
+  --page: #ffffff;
+  --text: #1f2328;
+  --muted: #6b7280;
+  --border: #dadce0;
+  --accent: #4f46e5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #18191b;
+    --page: #232427;
+    --text: #e6e6e6;
+    --muted: #9aa0a6;
+    --border: #3a3b3e;
+    --accent: #818cf8;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.app { min-height: 100vh; display: flex; flex-direction: column; }
+
+.toolbar {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; gap: 16px;
+  padding: 10px 20px;
+  background: var(--page);
+  border-bottom: 1px solid var(--border);
+}
+
+.title {
+  font-size: 18px; border: 1px solid transparent; border-radius: 4px;
+  padding: 4px 8px; background: transparent; color: var(--text); min-width: 0;
+}
+.title:hover, .title:focus { border-color: var(--border); outline: none; }
+
+.format-buttons { display: flex; gap: 4px; }
+.format-buttons button {
+  width: 32px; height: 32px; border: none; border-radius: 4px;
+  background: transparent; color: var(--text); cursor: pointer; font-size: 15px;
+}
+.format-buttons button:hover { background: var(--bg); }
+.format-buttons button.on { background: var(--bg); color: var(--accent); }
+
+.workspace {
+  flex: 1; display: flex; gap: 24px; justify-content: center;
+  padding: 24px 16px; align-items: flex-start;
+}
+
+.page {
+  width: 100%; max-width: 816px; min-height: 1056px;
+  background: var(--page); border: 1px solid var(--border);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  padding: 72px 80px;
+}
+
+.page-content {
+  outline: none; min-height: 900px;
+  font-family: Georgia, "Times New Roman", serif; font-size: 17px; line-height: 1.7;
+}
+.page-content p { margin: 0 0 1em; }
+.page-content p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder); color: var(--muted); float: left; height: 0; pointer-events: none;
+}
+
+.jev-panel {
+  position: sticky; top: 76px;
+  width: 300px; flex-shrink: 0;
+  background: var(--page); border: 1px solid var(--border); border-radius: 8px;
+  padding: 16px;
+}
+.jev-header { display: flex; align-items: baseline; justify-content: space-between; }
+.jev-header h2 { margin: 0 0 8px; font-size: 18px; }
+.jev-status { font-size: 12px; color: var(--muted); }
+.jev-status.error { color: #dc2626; }
+
+.jev-label {
+  display: block; margin: 12px 0 6px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
+}
+
+.jev-bars { list-style: none; padding: 0; margin: 0; }
+.jev-bars li {
+  display: grid; grid-template-columns: 110px 1fr 36px; align-items: center; gap: 8px;
+  font-size: 13px; margin-bottom: 6px;
+}
+.jev-track { height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+.jev-fill { display: block; height: 100%; border-radius: 4px; transition: width 0.4s ease; }
+.jev-pct { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+
+.jev-stale { opacity: 0.55; transition: opacity 0.2s; }
+.jev-hint { font-size: 14px; font-weight: 600; margin: 12px 0 4px; }
+.jev-reason { font-size: 13px; color: var(--muted); margin: 0; line-height: 1.5; }
+.jev-usage { font-size: 11px; color: var(--muted); margin: 8px 0 0; }
+.jev-empty { font-size: 13px; color: var(--muted); }
+.jev-error { font-size: 13px; color: #dc2626; }
+
+.jev-ask {
+  width: 100%; margin-top: 14px; padding: 8px;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: transparent; color: var(--text); cursor: pointer; font-size: 13px;
+}
+.jev-ask:hover { border-color: var(--accent); }
+.jev-ask kbd { font-size: 11px; color: var(--muted); margin-left: 6px; }
+
+.jev-notes {
+  width: 100%; min-height: 110px; resize: vertical;
+  border: 1px solid var(--border); border-radius: 6px; padding: 8px;
+  background: transparent; color: var(--text); font: inherit; font-size: 13px;
+}
+
+@media (max-width: 1100px) {
+  .workspace { flex-direction: column; align-items: center; }
+  .jev-panel { position: static; width: 100%; max-width: 816px; }
+}
+@media (max-width: 700px) {
+  .page { padding: 32px 20px; min-height: 0; }
+}
