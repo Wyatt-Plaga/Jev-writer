@@ -5,7 +5,17 @@ import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import { JevPanel } from "./JevPanel";
+import { AnalysisSection, type AnalysisState } from "./AnalysisSection";
+import {
+  AnalysisHighlight,
+  clearSentences,
+  extractSentences,
+  sentencePositions,
+  styleSentences,
+  trackSentences,
+} from "./analysisHighlight";
 import type { BeatPrediction, NextBeatRequest } from "@/lib/beats";
+import type { AnalysisResult, AnalyzeEvent, AnalyzeRequest } from "@/lib/analysis";
 
 const DOC_KEY = "jev:doc";
 const NOTES_KEY = "jev:notes";
@@ -47,6 +57,9 @@ export function Writer() {
   const [prediction, setPrediction] = useState<BeatPrediction | null>(null);
   const [status, setStatus] = useState<"idle" | "thinking" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
+  const [analysis, setAnalysis] = useState<AnalysisState>({ status: "idle" });
+  const [focused, setFocused] = useState<number | null>(null);
+  const analysisRun = useRef<AbortController | null>(null);
 
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inflight = useRef<AbortController | null>(null);
@@ -89,7 +102,7 @@ export function Writer() {
 
   const editor = useEditor({
     immediatelyRender: false,
-    extensions: [StarterKit, Placeholder.configure({ placeholder: "Start writing…" })],
+    extensions: [StarterKit, Placeholder.configure({ placeholder: "Start writing…" }), AnalysisHighlight],
     editorProps: { attributes: { class: "page-content" } },
     onCreate: ({ editor }) => {
       const saved = load(DOC_KEY);
@@ -103,6 +116,7 @@ export function Writer() {
     },
     onUpdate: ({ editor }) => {
       save(DOC_KEY, JSON.stringify(editor.getJSON()));
+      setAnalysis((a) => (a.status === "done" && !a.stale ? { ...a, stale: true } : a));
       if (timer.current) clearTimeout(timer.current);
       const { before } = textAroundCursor(editor);
       if (SENTENCE_END.test(before)) {
@@ -110,6 +124,99 @@ export function Writer() {
       }
     },
   });
+
+  const analyze = useCallback(async () => {
+    if (!editor) return;
+    const spans = extractSentences(editor.state.doc);
+    analysisRun.current?.abort();
+    const controller = new AbortController();
+    analysisRun.current = controller;
+    setFocused(null);
+    trackSentences(editor, spans);
+    setAnalysis({ status: "running", done: 0, total: 1, stage: "Starting" });
+
+    try {
+      const body: AnalyzeRequest = {
+        sentences: spans.map(({ text, paragraph }) => ({ text, paragraph })),
+        notes: notesRef.current,
+      };
+      const res = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      if (!res.ok || !res.body) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? `Request failed (${res.status})`);
+      }
+      // The route streams one JSON event per line: progress, then a result or an error.
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let result: AnalysisResult | null = null;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, nl);
+          buffer = buffer.slice(nl + 1);
+          if (!line) continue;
+          const event = JSON.parse(line) as AnalyzeEvent;
+          if (event.type === "progress") setAnalysis({ status: "running", ...event });
+          else if (event.type === "error") throw new Error(event.error);
+          else result = event.result;
+        }
+      }
+      if (!result) throw new Error("The analysis ended without a result.");
+      setAnalysis({ status: "done", result, texts: spans.map((s) => s.text), stale: false });
+    } catch (e) {
+      if (controller.signal.aborted) return;
+      clearSentences(editor);
+      setAnalysis({ status: "error", error: e instanceof Error ? e.message : String(e) });
+    }
+  }, [editor]);
+
+  const cancelAnalysis = useCallback(() => {
+    analysisRun.current?.abort();
+    if (editor) clearSentences(editor);
+    setAnalysis({ status: "idle" });
+  }, [editor]);
+
+  // Highlight deviations in the text, strongest first.
+  useEffect(() => {
+    if (!editor || analysis.status !== "done") return;
+    const { deviations, surprises, runs, sentences } = analysis.result;
+    const rank = new Map(deviations.map((i, r) => [i, r]));
+    const surprise = new Set(surprises);
+    const inRun = new Set(runs.flatMap((r) => Array.from({ length: r.end - r.start + 1 }, (_, j) => r.start + j)));
+    styleSentences(editor, (i) => {
+      const s = sentences[i];
+      const focus = focused === i ? " jev-focus" : "";
+      const title = s?.expected ? `Jev expected ${s.expected}; this is ${s.actual}` : undefined;
+      if (rank.has(i)) {
+        const heat = 1 - (rank.get(i)! / Math.max(1, deviations.length)) * 0.6;
+        return { class: "jev-dev" + focus, style: `--heat: ${heat.toFixed(2)}`, title };
+      }
+      if (surprise.has(i)) return { class: "jev-surprise" + focus, title };
+      if (inRun.has(i)) return { class: "jev-run" + focus, title };
+      return focus ? { class: "jev-s" + focus, title } : null;
+    });
+  }, [editor, analysis, focused]);
+
+  const focusSentence = useCallback(
+    (index: number) => {
+      setFocused(index);
+      const pos = editor && sentencePositions(editor).get(index);
+      if (!editor || !pos) return;
+      const { node } = editor.view.domAtPos(pos.from);
+      const el = node instanceof Element ? node : node.parentElement;
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    },
+    [editor],
+  );
 
   useEffect(() => {
     setTitle(load(TITLE_KEY) ?? "Untitled story");
@@ -176,7 +283,15 @@ export function Writer() {
             save(NOTES_KEY, n);
           }}
           onAsk={() => editor && ask(editor, true)}
-        />
+        >
+          <AnalysisSection
+            state={analysis}
+            focused={focused}
+            onAnalyze={analyze}
+            onCancel={cancelAnalysis}
+            onFocus={focusSentence}
+          />
+        </JevPanel>
       </main>
     </div>
   );

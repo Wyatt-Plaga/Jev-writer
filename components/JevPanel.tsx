@@ -9,9 +9,10 @@ type Props = {
   notes: string;
   onNotesChange: (notes: string) => void;
   onAsk: () => void;
+  children?: React.ReactNode;
 };
 
-export function JevPanel({ prediction, status, error, notes, onNotesChange, onAsk }: Props) {
+export function JevPanel({ prediction, status, error, notes, onNotesChange, onAsk, children }: Props) {
   return (
     <aside className="jev-panel">
       <div className="jev-header">
@@ -55,6 +56,8 @@ export function JevPanel({ prediction, status, error, notes, onNotesChange, onAs
       <button className="jev-ask" onClick={onAsk}>
         Ask Jev now <kbd>Ctrl/⌘ J</kbd>
       </button>
+
+      {children}
 
       <label className="jev-label" htmlFor="notes">
         Story notes

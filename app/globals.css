@@ -118,6 +118,44 @@ body {
   background: transparent; color: var(--text); font: inherit; font-size: 13px;
 }
 
+/* Chapter analysis */
+.jev-analysis { margin-top: 8px; border-top: 1px solid var(--border); padding-top: 4px; }
+.jev-muted { font-size: 12px; color: var(--muted); margin: 6px 0 0; line-height: 1.45; }
+.jev-progress { height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; }
+.jev-progress span { display: block; height: 100%; background: var(--accent); transition: width 0.2s; }
+
+.jev-timeline {
+  display: flex; align-items: flex-end; gap: 1px; height: 44px;
+  padding: 2px; background: var(--bg); border-radius: 4px;
+}
+.jev-tick {
+  flex: 1; min-width: 2px; height: 100%; padding: 0; border: none;
+  background: transparent; cursor: pointer; display: flex; align-items: flex-end;
+}
+.jev-tick span { display: block; width: 100%; border-radius: 1px; opacity: 0.55; }
+.jev-tick.flagged span { opacity: 1; box-shadow: 0 -3px 0 #dc2626; }
+.jev-tick:hover span, .jev-tick.on span { opacity: 1; outline: 1px solid var(--text); }
+
+.jev-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.jev-item {
+  width: 100%; text-align: left; display: flex; flex-direction: column; gap: 3px;
+  padding: 8px; border: 1px solid var(--border); border-radius: 6px;
+  background: transparent; color: var(--text); cursor: pointer; font: inherit;
+}
+.jev-item:hover, .jev-item.on { border-color: var(--accent); }
+.jev-item-head { font-size: 11px; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
+.jev-item-verdict { font-variant-numeric: tabular-nums; }
+.jev-item-text { font-family: Georgia, serif; font-size: 13px; line-height: 1.4; }
+.jev-item-beats { font-size: 12px; color: var(--muted); }
+
+.page-content .jev-dev {
+  background: rgba(220, 38, 38, calc(0.1 + var(--heat, 1) * 0.22));
+  border-radius: 2px;
+}
+.page-content .jev-run { text-decoration: underline dotted rgba(220, 38, 38, 0.7); text-underline-offset: 4px; }
+.page-content .jev-surprise { text-decoration: underline wavy #10b981; text-underline-offset: 4px; }
+.page-content .jev-focus { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
+
 @media (max-width: 1100px) {
   .workspace { flex-direction: column; align-items: center; }
   .jev-panel { position: static; width: 100%; max-width: 816px; }

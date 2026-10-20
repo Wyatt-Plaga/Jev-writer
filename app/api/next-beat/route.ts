@@ -1,24 +1,6 @@
-import {
-  APIError,
-  APIUserAbortError,
-  AuthenticationError,
-  RateLimitError,
-  TypeSafeClient,
-  choice,
-} from "@typesafe-ai/sdk";
-import { BEATS, BEAT_INFO, type Beat, type BeatPrediction, type NextBeatRequest } from "@/lib/beats";
-
-// Reads TYPESAFE_API_KEY (and optional TYPESAFE_BASE_URL) from the environment.
-// Created lazily: the constructor throws without a key, which would break `next build`.
-let client: TypeSafeClient | undefined;
-const getClient = () => (client ??= new TypeSafeClient({ defaultModel: "jev-latest" }));
-
-const INSTRUCTIONS = `You are Jev, a pacing coach for fiction writers. Read the writer's manuscript up to the cursor and judge what the NEXT sentence at the cursor should do. Consider the whole manuscript, not just the last line: what the reader has not been given in a while, what question is open, and the rhythm of recent sentences.`;
-
-const CRITERIA = Object.fromEntries(BEATS.map((b) => [b, BEAT_INFO[b].definition])) as Record<
-  Beat,
-  string
->;
+import { APIError, APIUserAbortError, AuthenticationError, RateLimitError, choice } from "@typesafe-ai/sdk";
+import { BEATS, type BeatPrediction, type NextBeatRequest } from "@/lib/beats";
+import { CRITERIA, NEXT_BEAT_INSTRUCTIONS, getClient, toDist } from "@/lib/jev";
 
 function buildState(req: NextBeatRequest) {
   return {
@@ -26,15 +8,6 @@ function buildState(req: NextBeatRequest) {
     manuscript_before_cursor: req.before,
     ...(req.after.trim() ? { manuscript_after_cursor: req.after } : {}),
   };
-}
-
-// Make sure every category appears and the percentages sum to 100.
-function normalize(probabilities: Partial<Record<Beat, number>>) {
-  const sum = BEATS.reduce((a, b) => a + Math.max(0, probabilities[b] ?? 0), 0) || 1;
-  return BEATS.map((category) => ({
-    category,
-    percent: Math.round((Math.max(0, probabilities[category] ?? 0) / sum) * 100),
-  })).sort((a, b) => b.percent - a.percent);
 }
 
 export async function POST(request: Request) {
@@ -47,14 +20,17 @@ export async function POST(request: Request) {
     const response = await getClient().systemOne(
       {
         state: buildState(body),
-        questions: { next_beat: choice(INSTRUCTIONS, CRITERIA) },
+        questions: { next_beat: choice(NEXT_BEAT_INSTRUCTIONS, CRITERIA) },
       },
       { signal: request.signal },
     );
 
     const answer = response.answers.next_beat;
+    const dist = toDist(answer.probabilities);
     const result: BeatPrediction = {
-      distribution: normalize(answer.probabilities),
+      distribution: BEATS.map((category) => ({ category, percent: Math.round(dist[category] * 100) })).sort(
+        (a, b) => b.percent - a.percent,
+      ),
       confidence: answer.confidence,
       model: response.model,
       usage: { inputTokens: response.usage.input_tokens ?? 0 },
