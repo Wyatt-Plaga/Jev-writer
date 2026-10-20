@@ -208,7 +208,10 @@ export function Writer() {
     styleSentences(editor, (i) => {
       const s = sentences[i];
       const focus = focused === i ? " jev-focus" : "";
-      const title = s?.expected ? `Jev expected ${s.expected}; this is ${s.actual}` : undefined;
+      const title =
+        s?.worksActual !== undefined
+          ? `${s.actual}: would work ${Math.round((s.works?.[s.actual] ?? 0) * 100)}%; ${s.bestAlternative}: ${Math.round((s.works?.[s.bestAlternative!] ?? 0) * 100)}%`
+          : undefined;
       if (rank.has(i)) {
         const heat = 1 - (rank.get(i)! / Math.max(1, deviations.length)) * 0.6;
         return { class: "jev-dev" + focus, style: `--heat: ${heat.toFixed(2)}`, title };

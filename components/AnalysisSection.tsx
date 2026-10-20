@@ -6,6 +6,8 @@ import type { AnalysisResult, SentenceResult } from "@/lib/analysis";
 // Jev's listed price per million input tokens; output tokens are free.
 const USD_PER_MILLION_INPUT = 0.042;
 const LIST_LIMIT = 10;
+// Matches the route: below this, Jev doesn't think a beat would work there.
+const WOULDNT_WORK = 0.4;
 
 export type AnalysisState =
   | { status: "idle" }
@@ -49,17 +51,19 @@ function Item({
         </span>
         <span className="jev-item-text">“{clip(text)}”</span>
         <span className="jev-item-beats">
-          Expected <b style={{ color: BEAT_INFO[r.expected!].color }}>{r.expected}</b> ({pct(r.expectedProb)}) ·
-          wrote <b style={{ color: BEAT_INFO[r.actual].color }}>{r.actual}</b> ({pct(r.probOfActual)} expected)
+          Wrote <b style={{ color: BEAT_INFO[r.actual].color }}>{r.actual}</b> (would work {pct(r.works?.[r.actual])}) ·{" "}
+          <b style={{ color: BEAT_INFO[r.bestAlternative!].color }}>{r.bestAlternative}</b> would work{" "}
+          {pct(r.works?.[r.bestAlternative!])}
         </span>
       </button>
     </li>
   );
 }
 
-// What Jev expected of one sentence, next to what it actually does.
+// Whether each beat would have worked at this sentence, next to what it actually does.
 function Breakdown({ r, text, onClose }: { r: SentenceResult; text: string; onClose: () => void }) {
-  const rows = r.predicted ? [...BEATS].sort((a, b) => r.predicted![b] - r.predicted![a]) : [];
+  const works = r.works;
+  const rows = works ? [...BEATS].sort((a, b) => works[b] - works[a]) : [];
   return (
     <div className="jev-breakdown">
       <div className="jev-item-head">
@@ -69,32 +73,47 @@ function Breakdown({ r, text, onClose }: { r: SentenceResult; text: string; onCl
         </button>
       </div>
       <p className="jev-item-text">“{clip(text, 160)}”</p>
-      {r.predicted ? (
+      {works && r.predicted ? (
         <>
-          <p className="jev-label">Jev expected</p>
-          <ul className="jev-bars">
+          <ul className="jev-bars jev-works">
+            <li className="jev-bars-head">
+              <span />
+              <span>Would work here</span>
+              <span />
+              <span title="Jev's single most likely pick, as a share of 100%">Likely</span>
+            </li>
             {rows.map((b) => (
-              <li key={b} className={b === r.actual ? "jev-wrote" : undefined} title={BEAT_INFO[b].definition}>
+              <li
+                key={b}
+                className={[b === r.actual && "jev-wrote", works[b] < WOULDNT_WORK && "jev-low"]
+                  .filter(Boolean)
+                  .join(" ")}
+                title={BEAT_INFO[b].definition}
+              >
                 <span className="jev-cat">{b}</span>
                 <span className="jev-track">
-                  <span
-                    className="jev-fill"
-                    style={{ width: pct(r.predicted![b]), background: BEAT_INFO[b].color }}
-                  />
+                  <span className="jev-fill" style={{ width: pct(works[b]), background: BEAT_INFO[b].color }} />
                 </span>
-                <span className="jev-pct">{pct(r.predicted![b])}</span>
+                <span className="jev-pct">{pct(works[b])}</span>
+                <span className="jev-pct jev-likely">{pct(r.predicted![b])}</span>
               </li>
             ))}
           </ul>
+          <p className="jev-muted">
+            Each beat is judged on its own, so several can work at once. You wrote{" "}
+            <b style={{ color: BEAT_INFO[r.actual].color }}>{r.actual}</b>, which Jev rates{" "}
+            {pct(works[r.actual])} likely to work here
+            {r.worksActual! < WOULDNT_WORK
+              ? `; ${r.bestAlternative} (${pct(works[r.bestAlternative!])}) would fit better.`
+              : "."}
+          </p>
         </>
       ) : (
-        <p className="jev-muted">The first sentence has nothing before it to predict from.</p>
+        <p className="jev-muted">
+          The first sentence has nothing before it to judge against. It reads as{" "}
+          <b style={{ color: BEAT_INFO[r.actual].color }}>{r.actual}</b>.
+        </p>
       )}
-      <p className="jev-muted">
-        You wrote <b style={{ color: BEAT_INFO[r.actual].color }}>{r.actual}</b> (Jev is {pct(r.actualProb)} sure of
-        that label)
-        {r.predicted && r.expected === r.actual && ", which matches what Jev expected"}.
-      </p>
       {r.breaksMomentum !== undefined && (
         <p className="jev-muted">
           Breaks momentum: {pct(r.breaksMomentum)} · works as a deliberate choice: {pct(1 - r.breaksMomentum)}
@@ -102,7 +121,8 @@ function Breakdown({ r, text, onClose }: { r: SentenceResult; text: string; onCl
       )}
       {r.stability !== undefined && (
         <p className="jev-muted">
-          Deviation score {pct(r.score)} · the three reworded predictions agreed {pct(r.stability)}
+          Deviation score {pct(r.score)} · label {pct(r.actualProb)} sure · the two reworded questions agreed{" "}
+          {pct(r.stability)}
         </p>
       )}
     </div>
@@ -165,7 +185,7 @@ function Results({
       {focused !== null && sentences[focused] ? (
         <Breakdown r={sentences[focused]} text={texts[focused]} onClose={onClearFocus} />
       ) : (
-        <p className="jev-muted">Click a sentence in the text or the timeline to see what Jev expected there.</p>
+        <p className="jev-muted">Click a sentence in the text or the timeline to see which beats would have worked there.</p>
       )}
 
       <p className="jev-label">Beat timeline</p>
@@ -175,7 +195,7 @@ function Results({
             key={s.index}
             role="listitem"
             className={`jev-tick${flagged.has(s.index) ? " flagged" : ""}${focused === s.index ? " on" : ""}`}
-            title={`Sentence ${s.index + 1}: ${s.actual}${s.expected ? ` (expected ${s.expected})` : ""}`}
+            title={`Sentence ${s.index + 1}: ${s.actual}${s.worksActual !== undefined ? ` (would work ${pct(s.works?.[s.actual])})` : ""}`}
             onClick={() => onFocus(s.index)}
           >
             <span
@@ -187,7 +207,7 @@ function Results({
           </button>
         ))}
       </div>
-      <p className="jev-muted">Color is what each sentence does; height is how far it went from what Jev expected.</p>
+      <p className="jev-muted">Color is what each sentence does; height is how unlikely that beat was to work there.</p>
 
       <p className="jev-label">Biggest deviations</p>
       {deviations.length ? (
@@ -220,7 +240,7 @@ function Results({
                   </span>
                   <span className="jev-item-text">“{clip(texts[run.start], 70)}”</span>
                   <span className="jev-item-beats">
-                    {run.end - run.start + 1} in a row going somewhere other than expected
+                    {run.end - run.start + 1} in a row with a beat Jev doubted would work
                   </span>
                 </button>
               </li>
@@ -231,7 +251,7 @@ function Results({
 
       {surprises.length > 0 && (
         <>
-          <p className="jev-label">Deviations that work</p>
+          <p className="jev-label">Risky choices that work</p>
           <ol className="jev-list">
             {surprises.slice(0, 5).map((i, rank) => (
               <Item

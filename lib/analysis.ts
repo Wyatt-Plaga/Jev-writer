@@ -23,11 +23,17 @@ export type SentenceResult = {
   expectedProb?: number;
   // Probability Jev gave, before seeing it, to what the writer actually did.
   probOfActual?: number;
-  // How unlikely Jev found the actual beat, times the label's confidence (0-1).
-  mismatch?: number;
-  // How much the reworded prediction questions agreed with each other (0-1).
+  // Chance a sentence of each beat would work here, asked separately per beat
+  // from the text before the sentence. These don't sum to 1.
+  works?: Record<Beat, number>;
+  // Chance the beat the writer used would work here, weighted by the label.
+  worksActual?: number;
+  // The beat other than the one used that Jev thought most likely to work.
+  bestAlternative?: Beat;
+  // How much the two reworded "would it work" questions agreed (0-1).
   stability?: number;
-  // Confidence-weighted deviation before the momentum check (0-1).
+  // (1 - worksActual) × how well the best alternative would work × stability,
+  // before the momentum check (0-1).
   score?: number;
   // Chance the sentence breaks momentum rather than being an effective surprise.
   // Only set for the candidates that were checked.
@@ -42,7 +48,7 @@ export type AnalysisResult = {
   deviations: number[];
   // Strong deviations that Jev thinks work as intentional surprises.
   surprises: number[];
-  // Stretches of 3+ sentences in a row that all go against the prediction.
+  // Stretches of 3+ sentences in a row whose beat Jev thought wouldn't work.
   runs: DeviationRun[];
   calls: number;
   inputTokens: number;

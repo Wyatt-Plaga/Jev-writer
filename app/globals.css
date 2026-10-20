@@ -177,3 +177,11 @@ body {
 @media (max-width: 700px) {
   .page { padding: 32px 20px; min-height: 0; }
 }
+
+/* "Would work" breakdown: bar per beat plus Jev's single-pick share. */
+.jev-bars.jev-works li { grid-template-columns: 104px 1fr 34px 34px; }
+.jev-bars-head { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.jev-bars-head span:last-child { text-align: right; }
+.jev-likely { font-size: 11px; opacity: 0.75; }
+.jev-bars li.jev-low .jev-fill { opacity: 0.4; }
+.jev-bars li.jev-low .jev-pct:not(.jev-likely) { color: #dc2626; }
