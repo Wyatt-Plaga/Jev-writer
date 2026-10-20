@@ -14,7 +14,11 @@ export type SentenceResult = {
   // What the sentence actually does, as Jev labels it with the sentence in context.
   actual: Beat;
   actualProb: number;
-  // What Jev expected from the text before the sentence. The first sentence has none.
+  // The full label distribution for the sentence, summing to 1.
+  labels: Record<Beat, number>;
+  // What Jev expected from the text before the sentence, averaged over the
+  // reworded questions and summing to 1. The first sentence has none.
+  predicted?: Record<Beat, number>;
   expected?: Beat;
   expectedProb?: number;
   // Probability Jev gave, before seeing it, to what the writer actually did.

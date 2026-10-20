@@ -61,7 +61,9 @@ function numberedPassage(sentences: Sentence[], from: number, to: number) {
 const argmax = (d: Dist) => BEATS.reduce((best, b) => (d[b] > d[best] ? b : best), BEATS[0]);
 const mean = (ds: Dist[]) =>
   Object.fromEntries(BEATS.map((b) => [b, ds.reduce((a, d) => a + d[b], 0) / ds.length])) as Dist;
-const totalVariation = (a: Dist, b: Dist) => BEATS.reduce((s, c) => s + Math.abs(a[c] - b[c]), 0) / 2;
+// Three decimals is plenty for display and keeps the response small.
+const round = (d: Dist) => Object.fromEntries(BEATS.map((b) => [b, Math.round(d[b] * 1000) / 1000])) as Dist;
+const totalVariation =(a: Dist, b: Dist) => BEATS.reduce((s, c) => s + Math.abs(a[c] - b[c]), 0) / 2;
 
 // Runs tasks with at most `limit` in flight, in order of the array.
 async function pool<T>(tasks: (() => Promise<T>)[], limit: number, onDone: () => void) {
@@ -145,7 +147,7 @@ async function analyze(
   // 3. Score: a confident prediction that the writer didn't follow.
   const results: SentenceResult[] = labels.map((a, index) => {
     const actual = argmax(a);
-    const base: SentenceResult = { index, actual, actualProb: a[actual] };
+    const base: SentenceResult = { index, actual, actualProb: a[actual], labels: round(a) };
     if (index === 0) return base;
     const phrasings = predictions[index - 1];
     const p = mean(phrasings);
@@ -155,6 +157,7 @@ async function analyze(
     const stability = 1 - phrasings.reduce((s, d) => s + totalVariation(d, p), 0) / phrasings.length;
     return {
       ...base,
+      predicted: round(p),
       expected,
       expectedProb: p[expected],
       probOfActual: p[actual],

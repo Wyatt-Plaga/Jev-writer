@@ -60,6 +60,8 @@ export function Writer() {
   const [analysis, setAnalysis] = useState<AnalysisState>({ status: "idle" });
   const [focused, setFocused] = useState<number | null>(null);
   const analysisRun = useRef<AbortController | null>(null);
+  const analysisRef = useRef(analysis);
+  analysisRef.current = analysis;
 
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inflight = useRef<AbortController | null>(null);
@@ -111,6 +113,17 @@ export function Writer() {
           editor.commands.setContent(JSON.parse(saved));
         } catch {
           // Ignore a corrupt save.
+        }
+      }
+    },
+    // Clicking into an analyzed sentence shows its breakdown in the panel.
+    onSelectionUpdate: ({ editor }) => {
+      if (analysisRef.current.status !== "done") return;
+      const at = editor.state.selection.from;
+      for (const [index, { from, to }] of sentencePositions(editor)) {
+        if (at >= from && at <= to) {
+          setFocused(index);
+          return;
         }
       }
     },
@@ -290,6 +303,7 @@ export function Writer() {
             onAnalyze={analyze}
             onCancel={cancelAnalysis}
             onFocus={focusSentence}
+            onClearFocus={() => setFocused(null)}
           />
         </JevPanel>
       </main>
