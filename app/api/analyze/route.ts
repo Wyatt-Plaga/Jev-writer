@@ -1,41 +1,41 @@
 import { APIError, AuthenticationError, RateLimitError, choice, noul } from "@typesafe-ai/sdk";
-import { BEATS, BEAT_INFO, type Beat } from "@/lib/beats";
+import { BEATS, WOULDNT_WORK, type Beat } from "@/lib/beats";
 import {
+  DOESNT_WORK,
   MAX_SENTENCES,
+  WORKS_WELL,
   type AnalysisResult,
   type AnalyzeEvent,
   type AnalyzeRequest,
-  type DeviationRun,
   type SentenceResult,
+  type Verdict,
+  type WeakRun,
 } from "@/lib/analysis";
-import { CRITERIA, NEXT_BEAT_INSTRUCTIONS, getClient, toDist, type Dist } from "@/lib/jev";
+import {
+  CRITERIA,
+  NEXT_BEAT_INSTRUCTIONS,
+  getClient,
+  readWorks,
+  toDist,
+  worksQuestions,
+  type Dist,
+} from "@/lib/jev";
 
 // Requests to Jev in flight at once. The SDK retries 429s using retry-after.
 const CONCURRENCY = 8;
 // Text before each sentence is capped at roughly the last 4k tokens.
 const PREFIX_CHARS = 16_000;
-// Sentences labeled per call, as separate questions over one numbered passage.
-const LABEL_BATCH = 20;
-// Sentences of context on each side of a labeling batch.
-const LABEL_CONTEXT = 6;
-// How many top deviations get the "mistake or intentional surprise" check.
-const MOMENTUM_CANDIDATES = 15;
-const MIN_SCORE_TO_CHECK = 0.15;
-// Momentum answers between these are too close to call, so they go in neither list.
-const BREAKS_MOMENTUM = 0.6;
-const WORKS_AS_SURPRISE = 0.4;
+// Sentences labeled and judged per call, as separate questions over one numbered passage.
+const BATCH = 20;
+// Sentences of context on each side of a batch.
+const CONTEXT = 6;
 
-// Below this, Jev doesn't think a beat would work at that point.
-const WOULDNT_WORK = 0.4;
-
-// "Would a sentence of this beat work here?", asked separately for every beat
-// so that several good options don't have to split one probability. Each is
-// asked two ways and averaged; disagreement between them lowers the score.
-const WORKS_PHRASINGS = [
-  (b: Beat) =>
-    `If the writer's next sentence were ${b} (${BEAT_INFO[b].definition.toLowerCase()}), would it work well at this exact point in the story?`,
-  (b: Beat) =>
-    `Would a skilled editor accept a ${b} sentence (${BEAT_INFO[b].definition.toLowerCase()}) as the very next sentence here?`,
+// Hindsight: does the sentence as written work, judged with what comes after it too.
+// Asked two ways and averaged; the second runs stricter than the first.
+const HINDSIGHT_PHRASINGS = [
+  (k: number) =>
+    `Does sentence [${k}] work well at its point in the story: does it do what the scene needs there, and is it well written?`,
+  (k: number) => `Would a skilled editor leave sentence [${k}] as it is, rather than cut, move or rewrite it?`,
 ];
 
 type Sentence = AnalyzeRequest["sentences"][number];
@@ -108,136 +108,96 @@ async function analyze(
     return p;
   };
 
-  const labelBatches = Math.ceil(n / LABEL_BATCH);
-  let total = n - 1 + labelBatches + MOMENTUM_CANDIDATES;
+  const batches = Math.ceil(n / BATCH);
+  const total = n - 1 + batches;
   let done = 0;
   const progress = (stage: string) => () => send({ type: "progress", done: ++done, total, stage });
 
-  // 1. From the text before each sentence only: which beat Jev expects most,
+  // 1. Forward, from the text before each sentence only: Jev's likeliest pick,
   // and whether each beat would work there.
   const predictions = await pool(
     sentences.slice(1).map((_, i) => async () => {
       const k = i + 1;
-      const questions: Record<string, ReturnType<typeof choice> | ReturnType<typeof noul>> = {
-        expected: choice(NEXT_BEAT_INSTRUCTIONS, CRITERIA),
-      };
-      for (const b of BEATS) WORKS_PHRASINGS.forEach((q, j) => (questions[`w${j}_${b}`] = noul(q(b))));
-      const r = await call({ state: { ...notes, manuscript_before_cursor: prefixBefore(sentences, k) }, questions });
-      const answer = (key: string) => r.answers[key] as unknown as { noul: number; probabilities: Partial<Dist> };
-      const phrasings = WORKS_PHRASINGS.map(
-        (_, j) => Object.fromEntries(BEATS.map((b) => [b, answer(`w${j}_${b}`).noul])) as Dist,
-      );
-      return {
-        expected: toDist(answer("expected").probabilities),
-        works: Object.fromEntries(BEATS.map((b) => [b, (phrasings[0][b] + phrasings[1][b]) / 2])) as Dist,
-        // 1 when both phrasings gave the same answers, lower as they drift apart.
-        stability: 1 - BEATS.reduce((s, b) => s + Math.abs(phrasings[0][b] - phrasings[1][b]), 0) / BEATS.length,
-      };
+      const r = await call({
+        state: { ...notes, manuscript_before_cursor: prefixBefore(sentences, k) },
+        questions: { expected: choice(NEXT_BEAT_INSTRUCTIONS, CRITERIA), ...worksQuestions() },
+      });
+      return { expected: toDist(r.answers.expected.probabilities as Partial<Dist>), ...readWorks(r.answers) };
     }),
     CONCURRENCY,
-    progress("Predicting each sentence"),
+    progress("Checking what would work before each sentence"),
   );
 
-  // 2. What each sentence actually does, labeled in context.
-  const labelChunks = await pool(
-    Array.from({ length: labelBatches }, (_, b) => async () => {
-      const from = b * LABEL_BATCH;
-      const to = Math.min(n, from + LABEL_BATCH);
-      const questions = Object.fromEntries(
-        Array.from({ length: to - from }, (_, j) => [
-          `s${from + j + 1}`,
-          choice(`What does sentence [${from + j + 1}] do in the story?`, CRITERIA),
-        ]),
-      );
-      const passage = numberedPassage(sentences, Math.max(0, from - LABEL_CONTEXT), Math.min(n, to + LABEL_CONTEXT));
+  // 2. Hindsight, with the passage around each sentence: what it does, and whether it works.
+  const judged = await pool(
+    Array.from({ length: batches }, (_, b) => async () => {
+      const from = b * BATCH;
+      const to = Math.min(n, from + BATCH);
+      const questions: Record<string, ReturnType<typeof choice> | ReturnType<typeof noul>> = {};
+      for (let i = from; i < to; i++) {
+        questions[`s${i + 1}`] = choice(`What does sentence [${i + 1}] do in the story?`, CRITERIA);
+        HINDSIGHT_PHRASINGS.forEach((q, j) => (questions[`q${j}_${i + 1}`] = noul(q(i + 1))));
+      }
+      const passage = numberedPassage(sentences, Math.max(0, from - CONTEXT), Math.min(n, to + CONTEXT));
       const r = await call({ state: { ...notes, passage }, questions });
-      return Array.from({ length: to - from }, (_, j) =>
-        toDist(r.answers[`s${from + j + 1}`].probabilities as Partial<Dist>),
-      );
+      const answers = r.answers as unknown as Record<string, { noul: number; probabilities: Partial<Dist> }>;
+      return Array.from({ length: to - from }, (_, j) => ({
+        label: toDist(answers[`s${from + j + 1}`].probabilities),
+        quality: HINDSIGHT_PHRASINGS.reduce((s, _, q) => s + answers[`q${q}_${from + j + 1}`].noul, 0) / HINDSIGHT_PHRASINGS.length,
+      }));
     }),
     CONCURRENCY,
-    progress("Labeling what each sentence does"),
+    progress("Judging each sentence in context"),
   );
-  const labels = labelChunks.flat();
 
-  // 3. Score: the writer picked a beat that wouldn't work there, when another would have.
-  const results: SentenceResult[] = labels.map((a, index) => {
+  // 3. Combine: the verdict comes from hindsight; the advice from both checks.
+  const results: SentenceResult[] = judged.flat().map(({ label: a, quality }, index) => {
     const actual = argmax(a);
-    const base: SentenceResult = { index, actual, actualProb: a[actual], labels: round(a) };
+    const verdict: Verdict = quality >= WORKS_WELL ? "green" : quality >= DOESNT_WORK ? "yellow" : "red";
+    const base: SentenceResult = { index, actual, actualProb: a[actual], labels: round(a), quality, verdict };
     if (index === 0) return base;
     const { expected: p, works, stability } = predictions[index - 1];
-    const expected = argmax(p);
-    const bestAlternative = argmax(works, actual);
     // Weighted by the label distribution, so an unsure label doesn't count fully.
     const worksActual = BEATS.reduce((s, b) => s + a[b] * works[b], 0);
+    const beatFits = worksActual >= WOULDNT_WORK;
     return {
       ...base,
+      advice: verdict === "green" ? (beatFits ? undefined : "risky-works") : beatFits ? "rewrite" : "change-beat",
       predicted: round(p),
-      expected,
-      expectedProb: p[expected],
-      probOfActual: p[actual],
+      expected: argmax(p),
       works: round(works),
       worksActual,
-      bestAlternative,
+      bestAlternative: argmax(works, actual),
       stability,
-      score: (1 - worksActual) * works[bestAlternative] * stability,
     };
   });
 
-  // 4. Is each top deviation a mistake, or a deliberate surprise that works?
-  const candidates = results
-    .filter((r) => (r.score ?? 0) >= MIN_SCORE_TO_CHECK && r.worksActual! < 0.5)
-    .sort((a, b) => b.score! - a.score!)
-    .slice(0, MOMENTUM_CANDIDATES);
-  total -= MOMENTUM_CANDIDATES - candidates.length;
-  await pool(
-    candidates.map((r) => async () => {
-      const better = r.bestAlternative as Beat;
-      const after = joinSentences(sentences.slice(r.index + 1, r.index + 4));
-      const q0 = `A pacing coach thought a ${r.actual} sentence was unlikely to work at this point, and that ${better} (${BEAT_INFO[better].definition.toLowerCase()}) would work better. The sentence in "sentence" is ${r.actual}. Does it break the story's momentum or feel misplaced, rather than working as a deliberate, effective choice?`;
-      const q1 = `Would a careful editor flag the sentence in "sentence" as hurting the pacing at this point in the story?`;
-      const out = await call({
-        state: {
-          ...notes,
-          before: prefixBefore(sentences, r.index).slice(-4000),
-          sentence: sentences[r.index].text,
-          ...(after ? { after } : ({} as Record<string, string>)),
-        },
-        questions: { m0: noul(q0), m1: noul(q1) },
-      });
-      r.breaksMomentum = (out.answers.m0.noul + out.answers.m1.noul) / 2;
-    }),
-    CONCURRENCY,
-    progress("Checking whether deviations work"),
-  );
-
-  const deviations = candidates
-    .filter((r) => r.breaksMomentum! >= BREAKS_MOMENTUM)
-    .sort((a, b) => b.score! * b.breaksMomentum! - a.score! * a.breaksMomentum!)
+  const toFix = results
+    .filter((r) => r.verdict !== "green")
+    .sort((a, b) => a.quality - b.quality)
     .map((r) => r.index);
-  const surprises = candidates
-    .filter((r) => r.breaksMomentum! <= WORKS_AS_SURPRISE)
-    .sort((a, b) => b.score! * (1 - b.breaksMomentum!) - a.score! * (1 - a.breaksMomentum!))
+  const riskyWorks = results
+    .filter((r) => r.advice === "risky-works")
+    .sort((a, b) => b.quality - a.quality)
     .map((r) => r.index);
 
-  // 5. Stretches of sentences in a row whose beat wouldn't work there.
-  const runs: DeviationRun[] = [];
+  // 4. Stretches of 3+ sentences in a row that aren't green.
+  const runs: WeakRun[] = [];
   let start = -1;
-  const deviates = (r: SentenceResult) => (r.worksActual ?? 1) < WOULDNT_WORK;
-  for (let i = 1; i <= n; i++) {
-    if (i < n && deviates(results[i])) {
+  for (let i = 0; i <= n; i++) {
+    if (i < n && results[i].verdict !== "green") {
       if (start < 0) start = i;
     } else if (start >= 0) {
       if (i - start >= 3) {
         const slice = results.slice(start, i);
-        runs.push({ start, end: i - 1, score: slice.reduce((s, r) => s + r.score!, 0) / slice.length });
+        runs.push({ start, end: i - 1, quality: slice.reduce((s, r) => s + r.quality, 0) / slice.length });
       }
       start = -1;
     }
   }
-  runs.sort((a, b) => b.score - a.score);
+  runs.sort((a, b) => a.quality - b.quality);
 
-  return { sentences: results, deviations, surprises, runs, calls, inputTokens };
+  return { sentences: results, toFix, riskyWorks, runs, calls, inputTokens };
 }
 
 export async function POST(request: Request) {

@@ -1,5 +1,5 @@
 // Server-only helpers shared by the API routes.
-import { TypeSafeClient } from "@typesafe-ai/sdk";
+import { TypeSafeClient, noul } from "@typesafe-ai/sdk";
 import { BEATS, BEAT_INFO, type Beat } from "./beats";
 
 // Reads TYPESAFE_API_KEY (and optional TYPESAFE_BASE_URL) from the environment.
@@ -23,4 +23,32 @@ export function toDist(probabilities: Partial<Record<Beat, number>>): Dist {
   return Object.fromEntries(
     BEATS.map((b) => [b, Math.max(0, probabilities[b] ?? 0) / sum]),
   ) as Dist;
+}
+
+// "Would a sentence of this beat work here?", asked separately for every beat
+// so that several good options don't have to split one probability. Each is
+// asked two ways and averaged; disagreement between them lowers confidence.
+const WORKS_PHRASINGS = [
+  (b: Beat) =>
+    `If the writer's next sentence were ${b} (${BEAT_INFO[b].definition.toLowerCase()}), would it work well at this exact point in the story?`,
+  (b: Beat) =>
+    `Would a skilled editor accept a ${b} sentence (${BEAT_INFO[b].definition.toLowerCase()}) as the very next sentence here?`,
+];
+
+export function worksQuestions() {
+  const questions: Record<string, ReturnType<typeof noul>> = {};
+  for (const b of BEATS) WORKS_PHRASINGS.forEach((q, j) => (questions[`w${j}_${b}`] = noul(q(b))));
+  return questions;
+}
+
+// Reads the answers to `worksQuestions()` back out of a response.
+export function readWorks(answers: Record<string, unknown>) {
+  const phrasings = WORKS_PHRASINGS.map(
+    (_, j) => Object.fromEntries(BEATS.map((b) => [b, (answers[`w${j}_${b}`] as { noul: number }).noul])) as Dist,
+  );
+  return {
+    works: Object.fromEntries(BEATS.map((b) => [b, (phrasings[0][b] + phrasings[1][b]) / 2])) as Dist,
+    // 1 when both phrasings gave the same answers, lower as they drift apart.
+    stability: 1 - BEATS.reduce((s, b) => s + Math.abs(phrasings[0][b] - phrasings[1][b]), 0) / BEATS.length,
+  };
 }

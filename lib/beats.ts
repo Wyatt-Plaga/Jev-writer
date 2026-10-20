@@ -43,8 +43,15 @@ export const BEAT_INFO: Record<Beat, { color: string; definition: string }> = {
   },
 };
 
+// Below this, Jev doesn't think a beat would work at that point.
+export const WOULDNT_WORK = 0.4;
+
 export type BeatPrediction = {
+  // Jev's single most likely pick, as shares of 100.
   distribution: { category: Beat; percent: number }[];
+  // Chance each beat would work as the next sentence, judged on its own;
+  // these don't sum to 100. Sorted best first.
+  works: { category: Beat; percent: number }[];
   confidence: number;
   model: string;
   usage?: { inputTokens: number };

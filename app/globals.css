@@ -131,11 +131,20 @@ body {
 }
 .jev-tick {
   flex: 1; min-width: 2px; height: 100%; padding: 0; border: none;
-  background: transparent; cursor: pointer; display: flex; align-items: flex-end;
+  background: transparent; cursor: pointer;
+  display: flex; flex-direction: column; justify-content: flex-end; gap: 2px;
 }
-.jev-tick span { display: block; width: 100%; border-radius: 1px; opacity: 0.55; }
-.jev-tick.flagged span { opacity: 1; box-shadow: 0 -3px 0 #dc2626; }
+.jev-tick span { display: block; width: 100%; border-radius: 1px; opacity: 0.8; }
+.jev-tick i { display: block; width: 100%; height: 4px; flex-shrink: 0; opacity: 0.7; }
 .jev-tick:hover span, .jev-tick.on span { opacity: 1; outline: 1px solid var(--text); }
+
+.jev-summary { display: flex; gap: 12px; font-size: 13px; font-weight: 600; margin: 10px 0 0; }
+.jev-chip {
+  display: inline-block; font-size: 10px; font-weight: 600; line-height: 1;
+  padding: 2px 5px; border: 1px solid; border-radius: 999px; white-space: nowrap;
+}
+.jev-advice { font-size: 12px; line-height: 1.45; }
+.jev-breakdown .jev-advice { display: block; margin-top: 6px; }
 
 .jev-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
 .jev-item {
@@ -162,12 +171,12 @@ body {
 .jev-bars li.jev-wrote .jev-cat { font-weight: 700; }
 .jev-bars li.jev-wrote .jev-cat::after { content: " ← wrote"; font-weight: 400; font-size: 11px; color: var(--muted); }
 
-.page-content .jev-dev {
-  background: rgba(220, 38, 38, calc(0.1 + var(--heat, 1) * 0.22));
-  border-radius: 2px;
+/* Verdict colors in the text. Green stays quiet so the problems stand out. */
+.page-content .jev-v-green {
+  text-decoration: underline 2px rgba(22, 163, 74, 0.45); text-underline-offset: 5px;
 }
-.page-content .jev-run { text-decoration: underline dotted rgba(220, 38, 38, 0.7); text-underline-offset: 4px; }
-.page-content .jev-surprise { text-decoration: underline wavy #10b981; text-underline-offset: 4px; }
+.page-content .jev-v-yellow { background: rgba(202, 138, 4, 0.22); border-radius: 2px; }
+.page-content .jev-v-red { background: rgba(220, 38, 38, 0.28); border-radius: 2px; }
 .page-content .jev-focus { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
 
 @media (max-width: 1100px) {

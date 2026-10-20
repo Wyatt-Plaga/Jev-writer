@@ -1,6 +1,6 @@
 import { APIError, APIUserAbortError, AuthenticationError, RateLimitError, choice } from "@typesafe-ai/sdk";
 import { BEATS, type BeatPrediction, type NextBeatRequest } from "@/lib/beats";
-import { CRITERIA, NEXT_BEAT_INSTRUCTIONS, getClient, toDist } from "@/lib/jev";
+import { CRITERIA, NEXT_BEAT_INSTRUCTIONS, getClient, readWorks, toDist, worksQuestions } from "@/lib/jev";
 
 function buildState(req: NextBeatRequest) {
   return {
@@ -20,17 +20,21 @@ export async function POST(request: Request) {
     const response = await getClient().systemOne(
       {
         state: buildState(body),
-        questions: { next_beat: choice(NEXT_BEAT_INSTRUCTIONS, CRITERIA) },
+        questions: { next_beat: choice(NEXT_BEAT_INSTRUCTIONS, CRITERIA), ...worksQuestions() },
       },
       { signal: request.signal },
     );
 
     const answer = response.answers.next_beat;
     const dist = toDist(answer.probabilities);
-    const result: BeatPrediction = {
-      distribution: BEATS.map((category) => ({ category, percent: Math.round(dist[category] * 100) })).sort(
+    const { works } = readWorks(response.answers);
+    const asPercents = (d: Record<(typeof BEATS)[number], number>) =>
+      BEATS.map((category) => ({ category, percent: Math.round(d[category] * 100) })).sort(
         (a, b) => b.percent - a.percent,
-      ),
+      );
+    const result: BeatPrediction = {
+      distribution: asPercents(dist),
+      works: asPercents(works),
       confidence: answer.confidence,
       model: response.model,
       usage: { inputTokens: response.usage.input_tokens ?? 0 },

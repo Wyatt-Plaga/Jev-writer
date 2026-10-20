@@ -5,7 +5,7 @@ import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import { JevPanel } from "./JevPanel";
-import { AnalysisSection, type AnalysisState } from "./AnalysisSection";
+import { AnalysisSection, VERDICT_INFO, type AnalysisState } from "./AnalysisSection";
 import {
   AnalysisHighlight,
   clearSentences,
@@ -198,27 +198,16 @@ export function Writer() {
     setAnalysis({ status: "idle" });
   }, [editor]);
 
-  // Highlight deviations in the text, strongest first.
+  // Color every analyzed sentence by its verdict.
   useEffect(() => {
     if (!editor || analysis.status !== "done") return;
-    const { deviations, surprises, runs, sentences } = analysis.result;
-    const rank = new Map(deviations.map((i, r) => [i, r]));
-    const surprise = new Set(surprises);
-    const inRun = new Set(runs.flatMap((r) => Array.from({ length: r.end - r.start + 1 }, (_, j) => r.start + j)));
+    const { sentences } = analysis.result;
     styleSentences(editor, (i) => {
       const s = sentences[i];
+      if (!s) return null;
       const focus = focused === i ? " jev-focus" : "";
-      const title =
-        s?.worksActual !== undefined
-          ? `${s.actual}: would work ${Math.round((s.works?.[s.actual] ?? 0) * 100)}%; ${s.bestAlternative}: ${Math.round((s.works?.[s.bestAlternative!] ?? 0) * 100)}%`
-          : undefined;
-      if (rank.has(i)) {
-        const heat = 1 - (rank.get(i)! / Math.max(1, deviations.length)) * 0.6;
-        return { class: "jev-dev" + focus, style: `--heat: ${heat.toFixed(2)}`, title };
-      }
-      if (surprise.has(i)) return { class: "jev-surprise" + focus, title };
-      if (inRun.has(i)) return { class: "jev-run" + focus, title };
-      return focus ? { class: "jev-s" + focus, title } : null;
+      const title = `${VERDICT_INFO[s.verdict].label} (${Math.round(s.quality * 100)}%) · ${s.actual}`;
+      return { class: `jev-v-${s.verdict}${focus}`, title };
     });
   }, [editor, analysis, focused]);
 

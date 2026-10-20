@@ -1,6 +1,6 @@
 "use client";
 
-import { BEAT_INFO, type BeatPrediction } from "@/lib/beats";
+import { BEAT_INFO, WOULDNT_WORK, type BeatPrediction } from "@/lib/beats";
 
 type Props = {
   prediction: BeatPrediction | null;
@@ -13,6 +13,7 @@ type Props = {
 };
 
 export function JevPanel({ prediction, status, error, notes, onNotesChange, onAsk, children }: Props) {
+  const likely = new Map(prediction?.distribution.map((d) => [d.category, d.percent]));
   return (
     <aside className="jev-panel">
       <div className="jev-header">
@@ -25,9 +26,19 @@ export function JevPanel({ prediction, status, error, notes, onNotesChange, onAs
       <p className="jev-label">Next sentence</p>
       {prediction ? (
         <div className={status === "thinking" ? "jev-stale" : undefined}>
-          <ul className="jev-bars">
-            {prediction.distribution.map(({ category, percent }) => (
-              <li key={category} title={BEAT_INFO[category].definition}>
+          <ul className="jev-bars jev-works">
+            <li className="jev-bars-head">
+              <span />
+              <span>Would work</span>
+              <span />
+              <span title="Jev's single most likely pick, as a share of 100%">Likely</span>
+            </li>
+            {prediction.works.map(({ category, percent }) => (
+              <li
+                key={category}
+                className={percent < WOULDNT_WORK * 100 ? "jev-low" : undefined}
+                title={BEAT_INFO[category].definition}
+              >
                 <span className="jev-cat">{category}</span>
                 <span className="jev-track">
                   <span
@@ -36,11 +47,12 @@ export function JevPanel({ prediction, status, error, notes, onNotesChange, onAs
                   />
                 </span>
                 <span className="jev-pct">{percent}%</span>
+                <span className="jev-pct jev-likely">{likely.get(category) ?? 0}%</span>
               </li>
             ))}
           </ul>
           <p className="jev-reason">
-            Confidence {Math.round(prediction.confidence * 100)}%
+            Each beat is judged on its own, so several can work. Faded ones probably won&apos;t fit here.
           </p>
           {prediction.usage && (
             <p className="jev-usage">
