@@ -38,12 +38,12 @@ export function JevPanel({ prediction, status, error, notes, onNotesChange, onAs
               </li>
             ))}
           </ul>
-          <p className="jev-hint">{prediction.hint}</p>
-          <p className="jev-reason">{prediction.reason}</p>
+          <p className="jev-reason">
+            Confidence {Math.round(prediction.confidence * 100)}%
+          </p>
           {prediction.usage && (
             <p className="jev-usage">
-              {prediction.usage.cachedTokens.toLocaleString()} tokens cached ·{" "}
-              {prediction.usage.uncachedTokens.toLocaleString()} new
+              {prediction.model} · {prediction.usage.inputTokens.toLocaleString()} tokens
             </p>
           )}
         </div>

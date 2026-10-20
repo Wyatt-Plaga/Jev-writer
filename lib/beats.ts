@@ -45,9 +45,9 @@ export const BEAT_INFO: Record<Beat, { color: string; definition: string }> = {
 
 export type BeatPrediction = {
   distribution: { category: Beat; percent: number }[];
-  reason: string;
-  hint: string;
-  usage?: { cachedTokens: number; uncachedTokens: number };
+  confidence: number;
+  model: string;
+  usage?: { inputTokens: number };
 };
 
 export type NextBeatRequest = {

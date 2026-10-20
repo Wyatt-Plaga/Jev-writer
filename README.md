@@ -13,7 +13,7 @@ Tension           15%  ████
 
 ```bash
 npm install
-cp .env.example .env.local   # then add your ANTHROPIC_API_KEY
+cp .env.example .env.local   # then add your TYPESAFE_API_KEY
 npm run dev                  # http://localhost:3000
 ```
 
@@ -21,8 +21,9 @@ npm run dev                  # http://localhost:3000
 
 - **Editor**: TipTap (`components/Writer.tsx`). Your document autosaves to the browser's localStorage.
 - **Trigger**: when the text before the cursor ends a sentence (`.`, `!`, `?` or `…`), Jev waits 900 ms and then asks. Ctrl/⌘+J asks immediately. A new request cancels any request still in flight.
-- **API** (`app/api/next-beat/route.ts`): sends the full text before the cursor, the text after it and your story notes to Claude. A structured-output schema makes Claude return a percentage for every category, a reason and a short hint. Percentages are normalized to sum to 100.
-- **Prompt caching**: the manuscript is sent in chunks of 20 paragraphs. Finished chunks stay byte-identical, so they're read from the cache, and typing at the end only re-processes the newest chunk. The panel shows how many tokens were cached. Editing an early chapter invalidates the cache from that point on for the next request.
-- **Categories** are defined in `lib/beats.ts`. Edit the definitions there to change how Jev classifies.
+- **API** (`app/api/next-beat/route.ts`): sends the text before the cursor, the text after it and your story notes to [Jev](https://docs.typesafe.ai/) (TypeSafe AI's System One model, `jev-latest`) as a single `choice` question over the beat categories. Jev returns a probability for each category plus a confidence, which the panel shows. Percentages are normalized to sum to 100.
+- **Categories** are defined in `lib/beats.ts`; their definitions are sent to Jev as the choice criteria. Edit them there to change how Jev classifies.
 
-The percentages are Claude's judgment written as numbers, not measured probabilities. Use them to rank options and see when Jev is unsure, not as exact figures.
+## Deploying
+
+Railway runs `npm run build` and `npm start`. Set `TYPESAFE_API_KEY` in the service's variables.
